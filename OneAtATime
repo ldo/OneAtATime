@@ -23,6 +23,10 @@
 #         seconds, assume it's taking too long and try to kill it
 #         before proceeding. If omitted, the timeout is infinity.
 #
+#     --verbose
+#         increases the verbosity level by 1 each time it is specified.
+#         The initial default verbosity level is 0.
+#
 #     --wait
 #         If specified, then this invocation should sleep until any
 #         previous instance is finished (or until the timeout elapses,
@@ -35,6 +39,8 @@
 # Start of development 2006 March 23 by Lawrence D'Oliveiro
 #     <ldo@geek-central.gen.nz>.
 # First working version 2006 March 24.
+# Fix hang if previous process dies without freeing instance lock and
+#     --timeout was not specified 2006 March 24.
 #-
 
 import sys
@@ -58,7 +64,12 @@ for Name in dir(signal) :
 # Mainline
 #-
 
-(Opts, Args) = getopt.getopt(sys.argv[1:], "", ["id=", "timeout=", "wait"])
+(Opts, Args) = getopt.getopt \
+  (
+	sys.argv[1:],
+	"",
+	["id=", "timeout=", "verbose", "wait"]
+  )
 if len(Args) != 1 :
 	raise getopt.GetoptError("need exactly one arg, the cmd to execute")
 #end if
@@ -66,11 +77,14 @@ Cmd = Args[0]
 ID = None
 Timeout = None
 Wait = False
+Verbosity = 0
 for Keyword, Value in Opts :
 	if Keyword == "--id" :
 		ID = Value
 	elif Keyword == "--timeout" :
 		Timeout = int(Value)
+	elif Keyword == "--verbose" :
+		Verbosity += 1
 	elif Keyword == "--wait" :
 		Wait = True
 	#end if
@@ -80,11 +94,17 @@ if ID == None :
 	  # less than 40-char file name should be OK
 #end if
 
+def Debug(Level, Msg) :
+	if Verbosity >= Level :
+		print Msg
+	#end if
+#end Debug
+
 PidFileName = "/tmp/OneAtATime-pid-%d" % os.getpid()
 PidFile = file(PidFileName, "w")
 PidFile.write("%s\n" % os.getpid())
 PidFile.close()
-InstanceLockName = "/tmp/OneAtaTime-lock-%s" % ID
+InstanceLockName = "/tmp/OneAtATime-lock-%s" % ID
   # presence of this file is used to guard against more than one
   # invocation of a task with the same id at once
 InstanceLock2Name = "/tmp/OneAtaTime-lock2-%s" % ID
@@ -93,6 +113,8 @@ InstanceLock2Name = "/tmp/OneAtaTime-lock2-%s" % ID
   # contained in that file
 GotLock = False
 GotLock2 = False
+LastLastMod = None
+OtherPid = None
 while True :
 	if not GotLock2 :
 		while True :
@@ -127,7 +149,7 @@ while True :
 			#end try
 			if LastMod != None :
 				if LastMod + 10 < time.time() :
-					print "Breaking secondary lock" # debug
+					Debug(0, "Breaking secondary lock")
 					try :
 						os.unlink(InstanceLock2Name)
 					except OSError, (ErrNo, Msg) :
@@ -160,17 +182,16 @@ while True :
 		#end if
 	#end try
 	if GotLock :
-		print "Got the lock" # debug
+		Debug(2, "Got the lock")
 		break
 	#end if
 	if not Wait :
-		print "Can't get lock, exiting" # debug
+		Debug(1, "Can't get lock, exiting")
 		break
 	#end if
-	WaitAWhile = True # to begin with
-	BreakLock = Timeout != None and time.time() > LastMod + Timeout
-	if BreakLock :
-		print "Getting existing process ID" # debug
+	if LastMod != LastLastMod :
+		# instance lock file seems to have changed, (re)fetch OtherPid.
+		Debug(2, "Getting existing process ID")
 		try :
 			PidFile = file(InstanceLockName, "r")
 		except OSError, (ErrNo, Msg) :
@@ -186,59 +207,79 @@ while True :
 			OtherPid = int(OtherPid.replace("\n", "").replace(" ", ""))
 			  # not bothering to guard against bad pidfile contents
 			PidFile.close()
-			print "Existing process ID is %d" % OtherPid # debug
+			Debug(0, "Existing process ID is %d")
 		else :
-			BreakLock = False # assume it's gone away
-			WaitAWhile = False # retry grabbing lock immediately
+			OtherPid = None
 		#end if
+		LastLastMod = LastMod
 	#end if
-	if BreakLock :
-		print "Breaking lock and killing existing lock owner" # debug
-		ExtremePrejudice = False
-		while True :
-			if ExtremePrejudice :
-				Signal = signal.SIGKILL
+	if OtherPid != None :
+	  # check the process still exists
+		try :
+			os.kill(OtherPid, 0)
+		except OSError, (ErrNo, Msg) :
+			if ErrNo == errno.ESRCH :
+				OtherPid = None # nope, it's gone
 			else :
-				Signal = signal.SIGTERM # give it a chance to clean up
+				# Not bothering to recover from privilege failures
+				raise OSError(ErrNo, Msg)
 			#end if
-			try :
-				os.kill(OtherPid, Signal)
-			except OSError, (ErrNo, Msg) :
-				if ErrNo == errno.ESRCH :
-					break # OK, it's gone
-				else :
-					# Not bothering to recover from privilege failures
-					raise OSError(ErrNo, Msg)
-				#end if
-			#end try
-			if ExtremePrejudice :
-				break # it should be gone
-			StartWait = time.time()
+		#end try
+	#end if
+	BreakLock = \
+			OtherPid == None \
+		or \
+			Timeout != None and time.time() > LastMod + Timeout
+	if BreakLock :
+		Debug(0, "Breaking lock and killing existing lock owner")
+		if OtherPid != None :
+			ExtremePrejudice = False
 			while True :
-				# wait up to a certain amount of time for process to
-				# terminate by itself
+				if ExtremePrejudice :
+					Signal = signal.SIGKILL
+				else :
+					Signal = signal.SIGTERM # give it a chance to clean up
+				#end if
 				try :
-					os.kill(OtherPid, 0)
-					StillThere = True
+					os.kill(OtherPid, Signal)
 				except OSError, (ErrNo, Msg) :
 					if ErrNo == errno.ESRCH :
-						StillThere = False
+						break # OK, it's gone
 					else :
 						# Not bothering to recover from privilege failures
 						raise OSError(ErrNo, Msg)
 					#end if
 				#end try
-				if not StillThere or time.time() - StartWait > 5.0 :
-				  # Note this timeout must be less than secondary lock timeout,
-				  # otherwise another invocation could take secondary lock
-				  # away from me
-					break
-				time.sleep(1)
+				if ExtremePrejudice :
+					break # it should be gone
+				StartWait = time.time()
+				while True :
+					# wait up to a certain amount of time for process to
+					# terminate by itself
+					try :
+						os.kill(OtherPid, 0)
+						StillThere = True
+					except OSError, (ErrNo, Msg) :
+						if ErrNo == errno.ESRCH :
+							StillThere = False
+						else :
+							# Not bothering to recover from privilege failures
+							raise OSError(ErrNo, Msg)
+						#end if
+					#end try
+					if not StillThere or time.time() - StartWait > 5.0 :
+					  # Note this timeout must be less than secondary lock timeout,
+					  # otherwise another invocation could take secondary lock
+					  # away from me
+						break
+					time.sleep(1)
+				#end while
+				if not StillThere :
+					break # OK, it's gone
+				ExtremePrejudice = True # out of patience
 			#end while
-			if not StillThere :
-				break # OK, it's gone
-			ExtremePrejudice = True # out of patience
-		#end while
+			OtherPid = None
+		#end if
 		# Lock owner killed, now clean up lock file (if owner
 		# didn't already clean it up) so I can grab it for myself
 		try :
@@ -249,7 +290,7 @@ while True :
 				raise OSError(ErrNo, Msg)
 			#end if
 		#end try
-	elif WaitAWhile :
+	elif OtherPid != None :
 		if GotLock2 :
 		  # mustn't hang on to secondary lock for too long
 			os.unlink(InstanceLock2Name)
@@ -263,7 +304,7 @@ if GotLock2 :
 #end if
 os.unlink(PidFileName)
 if GotLock :
-	print "Spawning \"%s\"" % Cmd # debug
+	Debug(2, "Spawning \"%s\"" % Cmd)
 	ChildPid = os.spawnl(os.P_NOWAIT, "/bin/bash", "/bin/bash", "-c", Cmd)
 	if Timeout != None :
 		StartWait = time.time()
@@ -273,7 +314,7 @@ if GotLock :
 			if ChildPidAgain != 0 :
 				break
 			if time.time() > StartWait + Timeout :
-				print "Command taking too long, killing" # debug
+				Debug(0, "Command taking too long, killing")
 				os.kill(ChildPid, signal.SIGKILL)
 				ChildStatus = os.waitpid(ChildPid, 0)[1]
 				break
@@ -284,7 +325,7 @@ if GotLock :
 	#end if
 	if os.WIFEXITED(ChildStatus) :
 		if os.WEXITSTATUS(ChildStatus) != 0 :
-			print "Child exited with status %d" % os.WEXITSTATUS(ChildStatus)
+			Debug(0, "Child exited with status %d" % os.WEXITSTATUS(ChildStatus))
 		#end if
 	elif os.WIFSIGNALED(ChildStatus) :
 		SigValue = os.WTERMSIG(ChildStatus)
@@ -293,9 +334,9 @@ if GotLock :
 		else :
 			SigName = "?"
 		#end if
-		print "Child died from signal %d (%s)" % (SigValue, SigName)
+		Debug(0, "Child died from signal %d (%s)" % (SigValue, SigName))
 	else :
-		print "Child ?terminated? status %d" % ChildStatus
+		Debug(0, "Child ?terminated? status %d" % ChildStatus)
 	#end if
 	os.unlink(InstanceLockName)
 #end if
