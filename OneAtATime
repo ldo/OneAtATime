@@ -41,6 +41,10 @@
 # First working version 2006 March 24.
 # Fix hang if previous process dies without freeing instance lock and
 #     --timeout was not specified 2006 March 24.
+# Ensure lock-breaking recovery is still invoked even without --wait,
+#     include effective user ID in instance lock name for uniqueness
+#     2006 March 25.
+# Last modified 2006 March 27.
 #-
 
 import sys
@@ -104,7 +108,7 @@ PidFileName = "/tmp/OneAtATime-pid-%d" % os.getpid()
 PidFile = file(PidFileName, "w")
 PidFile.write("%s\n" % os.getpid())
 PidFile.close()
-InstanceLockName = "/tmp/OneAtATime-lock-%s" % ID
+InstanceLockName = "/tmp/OneAtATime-lock-%d-%s" % (os.geteuid(), ID)
   # presence of this file is used to guard against more than one
   # invocation of a task with the same id at once
 InstanceLock2Name = "/tmp/OneAtaTime-lock2-%s" % ID
@@ -116,6 +120,7 @@ GotLock2 = False
 LastLastMod = None
 OtherPid = None
 while True :
+	# try to get instance lock
 	if not GotLock2 :
 		while True :
 			# grab the secondary lock for checking the instance lock
@@ -169,7 +174,6 @@ while True :
 	#end if not GotLock2
 	# At this point, I have the secondary lock, so nobody else will be
 	# trying the following operations at the same time.
-	# Try to grab the instance lock.
 	try :
 		LastMod = os.stat(InstanceLockName).st_mtime
 	except OSError, (ErrNo, Msg) :
@@ -183,10 +187,6 @@ while True :
 	#end try
 	if GotLock :
 		Debug(2, "Got the lock")
-		break
-	#end if
-	if not Wait :
-		Debug(1, "Can't get lock, exiting")
 		break
 	#end if
 	if LastMod != LastLastMod :
@@ -207,7 +207,7 @@ while True :
 			OtherPid = int(OtherPid.replace("\n", "").replace(" ", ""))
 			  # not bothering to guard against bad pidfile contents
 			PidFile.close()
-			Debug(0, "Existing process ID is %d")
+			Debug(1, "Existing process ID is %d" % OtherPid)
 		else :
 			OtherPid = None
 		#end if
@@ -296,6 +296,10 @@ while True :
 			os.unlink(InstanceLock2Name)
 			GotLock2 = False
 		#end if
+		if not Wait :
+			Debug(1, "Can't get lock, exiting")
+			break
+		#end if
 		time.sleep(1)
 	#end if
 #end while
@@ -325,7 +329,7 @@ if GotLock :
 	#end if
 	if os.WIFEXITED(ChildStatus) :
 		if os.WEXITSTATUS(ChildStatus) != 0 :
-			Debug(0, "Child exited with status %d" % os.WEXITSTATUS(ChildStatus))
+			Debug(1, "Child exited with status %d" % os.WEXITSTATUS(ChildStatus))
 		#end if
 	elif os.WIFSIGNALED(ChildStatus) :
 		SigValue = os.WTERMSIG(ChildStatus)
