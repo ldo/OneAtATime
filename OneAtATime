@@ -44,7 +44,7 @@
 # Ensure lock-breaking recovery is still invoked even without --wait,
 #     include effective user ID in instance lock name for uniqueness
 #     2006 March 25.
-# Last modified 2006 March 27.
+# Last modified 2007 August 8.
 #-
 
 import sys
@@ -105,7 +105,7 @@ def Debug(Level, Msg) :
 #end Debug
 
 PidFileName = "/tmp/OneAtATime-pid-%d" % os.getpid()
-PidFile = file(PidFileName, "w")
+PidFile = open(PidFileName, "w")
 PidFile.write("%s\n" % os.getpid())
 PidFile.close()
 InstanceLockName = "/tmp/OneAtATime-lock-%d-%s" % (os.geteuid(), ID)
@@ -155,6 +155,16 @@ while True :
 			if LastMod != None :
 				if LastMod + 10 < time.time() :
 					Debug(0, "Breaking secondary lock")
+					# FIXME: there is a race condition here if two
+					# processes try to break the secondary lock at
+					# the same time: the unlink below could remove
+					# the secondary lock after it has already been
+					# reacquired by the other process, so both processes
+					# end up thinking they have the secondary lock
+					# at the same time.
+					# For the moment, this means that my automatic
+					# cleanup of a timed-out secondary lock is not
+					# fully reliable. Oh well.
 					try :
 						os.unlink(InstanceLock2Name)
 					except OSError, (ErrNo, Msg) :
@@ -193,8 +203,8 @@ while True :
 		# instance lock file seems to have changed, (re)fetch OtherPid.
 		Debug(2, "Getting existing process ID")
 		try :
-			PidFile = file(InstanceLockName, "r")
-		except OSError, (ErrNo, Msg) :
+			PidFile = open(InstanceLockName, "r")
+		except IOError, (ErrNo, Msg) :
 			if ErrNo == errno.ENOENT :
 				PidFile = None
 			else :
