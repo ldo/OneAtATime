@@ -58,10 +58,10 @@ import sha
 SignalName = {}
 for Name in dir(signal) :
   # collect symbolic names for all signals
-	Value = getattr(signal, Name)
-	if Name.startswith("SIG") and type(Value) == int :
-		SignalName[Value] = Name
-	#end if
+    Value = getattr(signal, Name)
+    if Name.startswith("SIG") and type(Value) == int :
+        SignalName[Value] = Name
+    #end if
 #end for
 
 #+
@@ -70,12 +70,12 @@ for Name in dir(signal) :
 
 (Opts, Args) = getopt.getopt \
   (
-	sys.argv[1:],
-	"",
-	["id=", "timeout=", "verbose", "wait"]
+    sys.argv[1:],
+    "",
+    ["id=", "timeout=", "verbose", "wait"]
   )
 if len(Args) != 1 :
-	raise getopt.GetoptError("need exactly one arg, the cmd to execute")
+    raise getopt.GetoptError("need exactly one arg, the cmd to execute")
 #end if
 Cmd = Args[0]
 ID = None
@@ -83,25 +83,25 @@ Timeout = None
 Wait = False
 Verbosity = 0
 for Keyword, Value in Opts :
-	if Keyword == "--id" :
-		ID = Value
-	elif Keyword == "--timeout" :
-		Timeout = int(Value)
-	elif Keyword == "--verbose" :
-		Verbosity += 1
-	elif Keyword == "--wait" :
-		Wait = True
-	#end if
+    if Keyword == "--id" :
+        ID = Value
+    elif Keyword == "--timeout" :
+        Timeout = int(Value)
+    elif Keyword == "--verbose" :
+        Verbosity += 1
+    elif Keyword == "--wait" :
+        Wait = True
+    #end if
 #end for
 if ID == None :
-	ID = sha.new(Cmd).hexdigest()[:16]
-	  # less than 40-char file name should be OK
+    ID = sha.new(Cmd).hexdigest()[:16]
+      # less than 40-char file name should be OK
 #end if
 
 def Debug(Level, Msg) :
-	if Verbosity >= Level :
-		print Msg
-	#end if
+    if Verbosity >= Level :
+        print Msg
+    #end if
 #end Debug
 
 PidFileName = "/tmp/OneAtATime-pid-%d" % os.getpid()
@@ -120,237 +120,237 @@ GotLock2 = False
 LastLastMod = None
 OtherPid = None
 while True :
-	# try to get instance lock
-	if not GotLock2 :
-		while True :
-			# grab the secondary lock for checking the instance lock
-			try :
-				os.symlink(PidFileName, InstanceLock2Name)
-				  # guaranteed atomic operation that will fail if
-				  # destination name already exists. Note use of
-				  # symlink rather than link because my pid file
-				  # might be older than secondary lock timeout
-				  # if I've been waiting a while.
-				GotLock2 = True
-				break
-			except OSError, (ErrNo, Msg) :
-				if ErrNo != errno.EEXIST :
-					# Not bothering to recover from privilege failures
-					raise OSError(ErrNo, Msg)
-				#end if
-			#end try
-		  # Somebody else has the lock, check it looks reasonable
-			try :
-				LastMod = os.lstat(InstanceLock2Name).st_mtime
-				  # note use of lstat to find out how long symlink has
-				  # been present, not age of pid file
-			except OSError, (ErrNo, Msg) :
-				if ErrNo == errno.ENOENT :
-					LastMod = None
-				else :
-					# Not bothering to recover from privilege failures
-					raise OSError(ErrNo, Msg)
-				#end if
-			#end try
-			if LastMod != None :
-				if LastMod + 10 < time.time() :
-					Debug(0, "Breaking secondary lock")
-					# FIXME: there is a race condition here if two
-					# processes try to break the secondary lock at
-					# the same time: the unlink below could remove
-					# the secondary lock after it has already been
-					# reacquired by the other process, so both processes
-					# end up thinking they have the secondary lock
-					# at the same time.
-					# For the moment, this means that my automatic
-					# cleanup of a timed-out secondary lock is not
-					# fully reliable. Oh well.
-					try :
-						os.unlink(InstanceLock2Name)
-					except OSError, (ErrNo, Msg) :
-						if ErrNo != errno.ENOENT :
-							# Not bothering to recover from privilege failures
-							raise OSError(ErrNo, Msg)
-						#end if
-					#end try
-				else :
-					# lock looks valid, wait awhile and try again
-					time.sleep(1)
-				#end if
-			else :
-				pass # disappeared while I was looking at it
-			#end if
-		#end while
-	#end if not GotLock2
-	# At this point, I have the secondary lock, so nobody else will be
-	# trying the following operations at the same time.
-	try :
-		LastMod = os.stat(InstanceLockName).st_mtime
-	except OSError, (ErrNo, Msg) :
-		if ErrNo == errno.ENOENT :
-			os.link(PidFileName, InstanceLockName)
-			GotLock = True
-		else :
-			# Not bothering to recover from privilege failures
-			raise OSError(ErrNo, Msg)
-		#end if
-	#end try
-	if GotLock :
-		Debug(2, "Got the lock")
-		break
-	#end if
-	if LastMod != LastLastMod :
-		# instance lock file seems to have changed, (re)fetch OtherPid.
-		Debug(2, "Getting existing process ID")
-		try :
-			PidFile = open(InstanceLockName, "r")
-		except IOError, (ErrNo, Msg) :
-			if ErrNo == errno.ENOENT :
-				PidFile = None
-			else :
-				# Not bothering to recover from privilege failures
-				raise OSError(ErrNo, Msg)
-			#end if
-		#end try
-		if PidFile != None :
-			OtherPid = PidFile.readline()
-			OtherPid = int(OtherPid.replace("\n", "").replace(" ", ""))
-			  # not bothering to guard against bad pidfile contents
-			PidFile.close()
-			Debug(1, "Existing process ID is %d" % OtherPid)
-		else :
-			OtherPid = None
-		#end if
-		LastLastMod = LastMod
-	#end if
-	if OtherPid != None :
-	  # check the process still exists
-		try :
-			os.kill(OtherPid, 0)
-		except OSError, (ErrNo, Msg) :
-			if ErrNo == errno.ESRCH :
-				OtherPid = None # nope, it's gone
-			else :
-				# Not bothering to recover from privilege failures
-				raise OSError(ErrNo, Msg)
-			#end if
-		#end try
-	#end if
-	BreakLock = \
-			OtherPid == None \
-		or \
-			Timeout != None and time.time() > LastMod + Timeout
-	if BreakLock :
-		Debug(0, "Breaking lock and killing existing lock owner")
-		if OtherPid != None :
-			ExtremePrejudice = False
-			while True :
-				if ExtremePrejudice :
-					Signal = signal.SIGKILL
-				else :
-					Signal = signal.SIGTERM # give it a chance to clean up
-				#end if
-				try :
-					os.kill(OtherPid, Signal)
-				except OSError, (ErrNo, Msg) :
-					if ErrNo == errno.ESRCH :
-						break # OK, it's gone
-					else :
-						# Not bothering to recover from privilege failures
-						raise OSError(ErrNo, Msg)
-					#end if
-				#end try
-				if ExtremePrejudice :
-					break # it should be gone
-				StartWait = time.time()
-				while True :
-					# wait up to a certain amount of time for process to
-					# terminate by itself
-					try :
-						os.kill(OtherPid, 0)
-						StillThere = True
-					except OSError, (ErrNo, Msg) :
-						if ErrNo == errno.ESRCH :
-							StillThere = False
-						else :
-							# Not bothering to recover from privilege failures
-							raise OSError(ErrNo, Msg)
-						#end if
-					#end try
-					if not StillThere or time.time() - StartWait > 5.0 :
-					  # Note this timeout must be less than secondary lock timeout,
-					  # otherwise another invocation could take secondary lock
-					  # away from me
-						break
-					time.sleep(1)
-				#end while
-				if not StillThere :
-					break # OK, it's gone
-				ExtremePrejudice = True # out of patience
-			#end while
-			OtherPid = None
-		#end if
-		# Lock owner killed, now clean up lock file (if owner
-		# didn't already clean it up) so I can grab it for myself
-		try :
-			os.unlink(InstanceLockName)
-		except OSError, (ErrNo, Msg) :
-			if ErrNo != errno.ENOENT :
-				# Not bothering to recover from privilege failures
-				raise OSError(ErrNo, Msg)
-			#end if
-		#end try
-	elif OtherPid != None :
-		if GotLock2 :
-		  # mustn't hang on to secondary lock for too long
-			os.unlink(InstanceLock2Name)
-			GotLock2 = False
-		#end if
-		if not Wait :
-			Debug(1, "Can't get lock, exiting")
-			break
-		#end if
-		time.sleep(1)
-	#end if
+    # try to get instance lock
+    if not GotLock2 :
+        while True :
+            # grab the secondary lock for checking the instance lock
+            try :
+                os.symlink(PidFileName, InstanceLock2Name)
+                  # guaranteed atomic operation that will fail if
+                  # destination name already exists. Note use of
+                  # symlink rather than link because my pid file
+                  # might be older than secondary lock timeout
+                  # if I've been waiting a while.
+                GotLock2 = True
+                break
+            except OSError, (ErrNo, Msg) :
+                if ErrNo != errno.EEXIST :
+                    # Not bothering to recover from privilege failures
+                    raise OSError(ErrNo, Msg)
+                #end if
+            #end try
+          # Somebody else has the lock, check it looks reasonable
+            try :
+                LastMod = os.lstat(InstanceLock2Name).st_mtime
+                  # note use of lstat to find out how long symlink has
+                  # been present, not age of pid file
+            except OSError, (ErrNo, Msg) :
+                if ErrNo == errno.ENOENT :
+                    LastMod = None
+                else :
+                    # Not bothering to recover from privilege failures
+                    raise OSError(ErrNo, Msg)
+                #end if
+            #end try
+            if LastMod != None :
+                if LastMod + 10 < time.time() :
+                    Debug(0, "Breaking secondary lock")
+                    # FIXME: there is a race condition here if two
+                    # processes try to break the secondary lock at
+                    # the same time: the unlink below could remove
+                    # the secondary lock after it has already been
+                    # reacquired by the other process, so both processes
+                    # end up thinking they have the secondary lock
+                    # at the same time.
+                    # For the moment, this means that my automatic
+                    # cleanup of a timed-out secondary lock is not
+                    # fully reliable. Oh well.
+                    try :
+                        os.unlink(InstanceLock2Name)
+                    except OSError, (ErrNo, Msg) :
+                        if ErrNo != errno.ENOENT :
+                            # Not bothering to recover from privilege failures
+                            raise OSError(ErrNo, Msg)
+                        #end if
+                    #end try
+                else :
+                    # lock looks valid, wait awhile and try again
+                    time.sleep(1)
+                #end if
+            else :
+                pass # disappeared while I was looking at it
+            #end if
+        #end while
+    #end if not GotLock2
+    # At this point, I have the secondary lock, so nobody else will be
+    # trying the following operations at the same time.
+    try :
+        LastMod = os.stat(InstanceLockName).st_mtime
+    except OSError, (ErrNo, Msg) :
+        if ErrNo == errno.ENOENT :
+            os.link(PidFileName, InstanceLockName)
+            GotLock = True
+        else :
+            # Not bothering to recover from privilege failures
+            raise OSError(ErrNo, Msg)
+        #end if
+    #end try
+    if GotLock :
+        Debug(2, "Got the lock")
+        break
+    #end if
+    if LastMod != LastLastMod :
+        # instance lock file seems to have changed, (re)fetch OtherPid.
+        Debug(2, "Getting existing process ID")
+        try :
+            PidFile = open(InstanceLockName, "r")
+        except IOError, (ErrNo, Msg) :
+            if ErrNo == errno.ENOENT :
+                PidFile = None
+            else :
+                # Not bothering to recover from privilege failures
+                raise OSError(ErrNo, Msg)
+            #end if
+        #end try
+        if PidFile != None :
+            OtherPid = PidFile.readline()
+            OtherPid = int(OtherPid.replace("\n", "").replace(" ", ""))
+              # not bothering to guard against bad pidfile contents
+            PidFile.close()
+            Debug(1, "Existing process ID is %d" % OtherPid)
+        else :
+            OtherPid = None
+        #end if
+        LastLastMod = LastMod
+    #end if
+    if OtherPid != None :
+      # check the process still exists
+        try :
+            os.kill(OtherPid, 0)
+        except OSError, (ErrNo, Msg) :
+            if ErrNo == errno.ESRCH :
+                OtherPid = None # nope, it's gone
+            else :
+                # Not bothering to recover from privilege failures
+                raise OSError(ErrNo, Msg)
+            #end if
+        #end try
+    #end if
+    BreakLock = \
+            OtherPid == None \
+        or \
+            Timeout != None and time.time() > LastMod + Timeout
+    if BreakLock :
+        Debug(0, "Breaking lock and killing existing lock owner")
+        if OtherPid != None :
+            ExtremePrejudice = False
+            while True :
+                if ExtremePrejudice :
+                    Signal = signal.SIGKILL
+                else :
+                    Signal = signal.SIGTERM # give it a chance to clean up
+                #end if
+                try :
+                    os.kill(OtherPid, Signal)
+                except OSError, (ErrNo, Msg) :
+                    if ErrNo == errno.ESRCH :
+                        break # OK, it's gone
+                    else :
+                        # Not bothering to recover from privilege failures
+                        raise OSError(ErrNo, Msg)
+                    #end if
+                #end try
+                if ExtremePrejudice :
+                    break # it should be gone
+                StartWait = time.time()
+                while True :
+                    # wait up to a certain amount of time for process to
+                    # terminate by itself
+                    try :
+                        os.kill(OtherPid, 0)
+                        StillThere = True
+                    except OSError, (ErrNo, Msg) :
+                        if ErrNo == errno.ESRCH :
+                            StillThere = False
+                        else :
+                            # Not bothering to recover from privilege failures
+                            raise OSError(ErrNo, Msg)
+                        #end if
+                    #end try
+                    if not StillThere or time.time() - StartWait > 5.0 :
+                      # Note this timeout must be less than secondary lock timeout,
+                      # otherwise another invocation could take secondary lock
+                      # away from me
+                        break
+                    time.sleep(1)
+                #end while
+                if not StillThere :
+                    break # OK, it's gone
+                ExtremePrejudice = True # out of patience
+            #end while
+            OtherPid = None
+        #end if
+        # Lock owner killed, now clean up lock file (if owner
+        # didn't already clean it up) so I can grab it for myself
+        try :
+            os.unlink(InstanceLockName)
+        except OSError, (ErrNo, Msg) :
+            if ErrNo != errno.ENOENT :
+                # Not bothering to recover from privilege failures
+                raise OSError(ErrNo, Msg)
+            #end if
+        #end try
+    elif OtherPid != None :
+        if GotLock2 :
+          # mustn't hang on to secondary lock for too long
+            os.unlink(InstanceLock2Name)
+            GotLock2 = False
+        #end if
+        if not Wait :
+            Debug(1, "Can't get lock, exiting")
+            break
+        #end if
+        time.sleep(1)
+    #end if
 #end while
 if GotLock2 :
-	os.unlink(InstanceLock2Name)
+    os.unlink(InstanceLock2Name)
 #end if
 os.unlink(PidFileName)
 if GotLock :
-	Debug(2, "Spawning \"%s\"" % Cmd)
-	ChildPid = os.spawnl(os.P_NOWAIT, "/bin/bash", "/bin/bash", "-c", Cmd)
-	if Timeout != None :
-		StartWait = time.time()
-		while True :
-			time.sleep(5)
-			(ChildPidAgain, ChildStatus) = os.waitpid(ChildPid, os.WNOHANG)
-			if ChildPidAgain != 0 :
-				break
-			if time.time() > StartWait + Timeout :
-				Debug(0, "Command taking too long, killing")
-				os.kill(ChildPid, signal.SIGKILL)
-				ChildStatus = os.waitpid(ChildPid, 0)[1]
-				break
-			#end if
-		#end while
-	else :
-		ChildStatus = os.waitpid(ChildPid, 0)[1]
-	#end if
-	if os.WIFEXITED(ChildStatus) :
-		if os.WEXITSTATUS(ChildStatus) != 0 :
-			Debug(1, "Child exited with status %d" % os.WEXITSTATUS(ChildStatus))
-		#end if
-	elif os.WIFSIGNALED(ChildStatus) :
-		SigValue = os.WTERMSIG(ChildStatus)
-		if SignalName.has_key(SigValue) :
-			SigName = SignalName[SigValue]
-		else :
-			SigName = "?"
-		#end if
-		Debug(0, "Child died from signal %d (%s)" % (SigValue, SigName))
-	else :
-		Debug(0, "Child ?terminated? status %d" % ChildStatus)
-	#end if
-	os.unlink(InstanceLockName)
+    Debug(2, "Spawning \"%s\"" % Cmd)
+    ChildPid = os.spawnl(os.P_NOWAIT, "/bin/bash", "/bin/bash", "-c", Cmd)
+    if Timeout != None :
+        StartWait = time.time()
+        while True :
+            time.sleep(5)
+            (ChildPidAgain, ChildStatus) = os.waitpid(ChildPid, os.WNOHANG)
+            if ChildPidAgain != 0 :
+                break
+            if time.time() > StartWait + Timeout :
+                Debug(0, "Command taking too long, killing")
+                os.kill(ChildPid, signal.SIGKILL)
+                ChildStatus = os.waitpid(ChildPid, 0)[1]
+                break
+            #end if
+        #end while
+    else :
+        ChildStatus = os.waitpid(ChildPid, 0)[1]
+    #end if
+    if os.WIFEXITED(ChildStatus) :
+        if os.WEXITSTATUS(ChildStatus) != 0 :
+            Debug(1, "Child exited with status %d" % os.WEXITSTATUS(ChildStatus))
+        #end if
+    elif os.WIFSIGNALED(ChildStatus) :
+        SigValue = os.WTERMSIG(ChildStatus)
+        if SignalName.has_key(SigValue) :
+            SigName = SignalName[SigValue]
+        else :
+            SigName = "?"
+        #end if
+        Debug(0, "Child died from signal %d (%s)" % (SigValue, SigName))
+    else :
+        Debug(0, "Child ?terminated? status %d" % ChildStatus)
+    #end if
+    os.unlink(InstanceLockName)
 #end if
